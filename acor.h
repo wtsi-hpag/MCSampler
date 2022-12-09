@@ -14,6 +14,13 @@ using namespace std;
                                        than MINFAC * MAXLAG.                                        */
 
   /*  Jonathan Goodman, March 2009, goodman@cims.nyu.edu  */
+
+/*
+   JFG (2022)
+   I made some small tweaks to this algorithm, mainly in terms of the return value: namely that in the Goodman implementation never actually returns anything other than 0: if the autocorrelation function fails, it prints out an error message but then returns a value without indicating to anything other than stderr that something went wrong. I now propagate these errors into the final return value.
+
+*/
+
 int acor( double *mean, double *sigma, double *tau, double X[], int L){
    
    *mean = 0.;                                   // Compute the mean of X ... 
@@ -53,7 +60,7 @@ int acor( double *mean, double *sigma, double *tau, double X[], int L){
 	     X[i] = X[j1] + X[j2];
 		 j1  += 2;
 		 j2  += 2; }
-	  int q = acor( &newMean, sigma, tau, X, Lh);
+	  int q = acor( &newMean, sigma, tau, X, Lh); // Changed by JFG! Now catch if the return 1 line is hit in a recursion and make sure it makes its way out of the loop
      if (q == 1)
      {
       return 1;
