@@ -2,6 +2,7 @@
 #include <vector>
 #include <iostream>
 #include <random>
+#include <thread>
 #include "acor.h"
 namespace MCMC
 {
@@ -93,12 +94,12 @@ namespace MCMC
 	};
 	struct Histogram
 	{
-		std::vector<double> centres;
-		std::vector<double> frequency;
+		std::vector<double> Centres;
+		std::vector<double> Frequency;
 		Histogram(int bins)
 		{
-			centres.resize(bins);
-			frequency.resize(bins,0.0);
+			Centres.resize(bins);
+			Frequency.resize(bins,0.0);
 		}
 	};
 	class Sampler
@@ -158,17 +159,25 @@ namespace MCMC
 			double MoveParameter = 2;
 			Sampler(int nWalkers,int dimensions, int nThreads) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(nThreads)
 			{
-				Comment("Initialising Sampler, using default parameter names)");
+				Comment("Initialising Multi-Core Sampler, using default parameter names)");
 				ParameterNames.resize(dimensions);
 				for (int i = 0; i < dimensions; ++i)
 				{
 					ParameterNames[i] = "Param " + std::to_string(i);
 				}
 			}
-			
+			Sampler(int nWalkers, int dimensions) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(1)
+			{
+				Comment("Initialising Single-Core Sampler, using default parameter names)");
+				ParameterNames.resize(dimensions);
+				for (int i = 0; i < dimensions; ++i)
+				{
+					ParameterNames[i] = "Param " + std::to_string(i);
+				}
+			}
 			Sampler(int nWalkers,int dimensions,int nThreads, std::vector<std::string> names) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(nThreads)
 			{
-				Comment("Initialising Sampler");
+				Comment("Initialising Multi-Core Sampler");
 				int origSize = names.size(); //protect against dodgy name arrays
 				if (origSize != dimensions)
 				{
@@ -181,7 +190,21 @@ namespace MCMC
 				}
 				ParameterNames = names;
 			}
-
+			Sampler(int nWalkers,int dimensions, std::vector<std::string> names) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(1)
+			{
+				Comment("Initialising Single-Core Sampler");
+				int origSize = names.size(); //protect against dodgy name arrays
+				if (origSize != dimensions)
+				{
+					Comment("\tWARNING: Name vector was ill-sized and had to be buffered");
+					names.resize(dimensions);
+					for (int j = origSize; j < dimensions; ++j)
+					{
+						names[j] = "Param " + std::to_string(j);
+					}
+				}
+				ParameterNames = names;
+			}
 			template<typename Functor>
 			void Run(Functor & f, int nSamples,std::vector<double> initialGuess)
 			{
@@ -268,8 +291,8 @@ namespace MCMC
 					// Histogram out(bins);
 					for (int b = 0; b < bins; ++b)
 					{
-						out.centres[b] = (b+0.5)*delta + lowestVal;
-						out.frequency[b] = 0;
+						out.Centres[b] = (b+0.5)*delta + lowestVal;
+						out.Frequency[b] = 0;
 					}
 
 
@@ -280,7 +303,7 @@ namespace MCMC
 						{
 							int bin = (v - lowestVal)/delta;
 							bin = std::min(bins-1,std::max(0,bin)); //needed because of equality in if statement: can cause under or overflows
-							++out.frequency[bin];
+							++out.Frequency[bin];
 						}
 					}
 
@@ -288,9 +311,9 @@ namespace MCMC
 					int bMax = -1;
 					for (int b = 0; b < bins; ++b)
 					{
-						if (out.frequency[b] > maxCont)
+						if (out.Frequency[b] > maxCont)
 						{
-							maxCont = out.frequency[b];
+							maxCont = out.Frequency[b];
 							bMax = b;
 						}
 					}
@@ -301,33 +324,33 @@ namespace MCMC
 					bool rightFound = false;
 					for (int b = 0; b < bMax; ++b)
 					{
-						double v = out.frequency[b];
+						double v = out.Frequency[b];
 						double thisContrast = maxCont/(v + 1e-100);
 						if (v > 0 && maxCont/v <= contrast)
 						{
-							lowestVal = out.centres[b] - delta;
+							lowestVal = out.Centres[b] - delta;
 							b = bMax;
 							leftFound = true;
 						}
 					}
 					for (int b = bins-1; b > bMax; --b)
 					{
-						double v = out.frequency[b];
+						double v = out.Frequency[b];
 						double thisContrast = maxCont/(v + 1e-100);
 						if (v > 0 && maxCont/v <= contrast)
 						{
-							largestVal = out.centres[b] + delta;
+							largestVal = out.Centres[b] + delta;
 							b = bMax;
 							rightFound = true;
 						}
 					}
 					if (!leftFound)
 					{
-						lowestVal = out.centres[bMax] - 2*delta;
+						lowestVal = out.Centres[bMax] - 2*delta;
 					}
 					if (!rightFound)
 					{
-						largestVal = out.centres[bMax] + 2*delta;
+						largestVal = out.Centres[bMax] + 2*delta;
 					}
 				}
 
@@ -335,10 +358,10 @@ namespace MCMC
 				double prev = 0;
 				for (int b = 0; b < bins; ++b)
 				{
-					out.frequency[b] /= (count*delta);
+					out.Frequency[b] /= (count*delta);
 					
-					// r += out.frequency[b];
-					// out.frequency[b] = r;
+					// r += out.Frequency[b];
+					// out.Frequency[b] = r;
 				}
 				return out;
 			}

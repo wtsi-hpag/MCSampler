@@ -8,10 +8,54 @@ Parallelisation is supported through the ```<thread>``` library Unlike the Forem
 
 ## Usage
 
+The basic functionality of the code is as follows:
 ```c++
-	MCMC::Sampler sampler(nWalkers, dimensions, nthreads)
-	sampler.Run(targetFunction, nSamples, initialGuess)
+	#include "MCSampler.h"
+	double logLikelihood(const std::vector<double> & parameters)
+	{
+		return //some function of the input parameters
+	}
+
+	int main(int argc, char** argv)
+	{
+		int nWalkers = //the number of members of the ensemble - the higher the number the more parallelisation helps you
+		int dimensions = //the number of parameters required for logLikelihodd
+		MCMC::Sampler sampler(nWalkers, dimensions;)
+		sampler.Run(targetFunction, nSamples, initialGuess);
+	}
 ```
+
+This works on any function which takes an ```std::vector<double>``` as input, and returns a double (including Lambdas). If the function requires more inputs -- such as a dataset which is being evaluated against -- then it is probably best to construct a functor which contains these parameters. If the functor possesses an overload for ```operator ()(std::vector<double>)```, then it works identically to the above:
+
+```c++
+	#include "MCSampler.h"
+	class LikelihoodFunctor
+	{
+		inputData MyData
+		LiklihoodFunctor(inputData data)
+		{
+			MyData = data;
+		}
+		double operator ()(const std::vector<double> & parameters)
+		{
+			return //some function of the input parameters and MyData
+		}
+	}
+	int main(int argc, char** argv)
+	{
+		int nWalkers = //the number of members of the ensemble - the higher the number the more parallelisation helps you
+		int dimensions = //the number of parameters required for logLikelihodd
+		MCMC::Sampler sampler(nWalkers, dimensions;)
+
+		inputData data = ///some data stored in some structure 
+
+		LikelihoodFunctor targetFunction(data);
+		sampler.Run(targetFunction, nSamples, initialGuess);
+	}
+
+```
+
+
 <!-- 
 ## Compiling 
 
