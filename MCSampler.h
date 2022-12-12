@@ -124,7 +124,8 @@ namespace MCMC
 			std::default_random_engine generator;
 			std::uniform_real_distribution<double> uniform = std::uniform_real_distribution<double>(0,1);
 			std::uniform_int_distribution<int> pairSelector;
-
+			std::vector<bool> ThreadWaiting;
+			std::vector<bool> OperationComplete;
 			bool Verbose = true;
 
 			template<typename Functor>
@@ -159,6 +160,27 @@ namespace MCMC
 					
 				}
 			}
+
+			template<typename Functor>
+			void ThreadWaiter(int threadID,int kStart, int kEnd, Functor & LogScore)
+			{
+				OperationComplete[threadID] = false;
+				int z = 0;
+				while (OperationComplete[threadID] == false)
+				{
+					++z;
+					if (ThreadWaiting[threadID])
+					{
+						SamplingStep(kStart,kEnd,LogScore);
+
+						ThreadWaiting[threadID] = false;
+					}
+
+
+				}
+			}
+
+
 			void Comment(std::string input)
 			{
 				if (Verbose)
@@ -170,7 +192,7 @@ namespace MCMC
 			double MoveParameter = 2;
 			Sampler(int nWalkers,int dimensions, int nThreads) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(nThreads)
 			{
-				Comment("Initialising Multi-Core Sampler, using default parameter names)");
+				Comment("Initialising Multi-Core Sampler, using default parameter names");
 				ParameterNames.resize(dimensions);
 				for (int i = 0; i < dimensions; ++i)
 				{
@@ -179,7 +201,7 @@ namespace MCMC
 			}
 			Sampler(int nWalkers, int dimensions) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(1)
 			{
-				Comment("Initialising Single-Core Sampler, using default parameter names)");
+				Comment("Initialising Single-Core Sampler, using default parameter names");
 				ParameterNames.resize(dimensions);
 				for (int i = 0; i < dimensions; ++i)
 				{
@@ -247,25 +269,42 @@ namespace MCMC
 				
 				int nonMainCount = ThreadCount - 1;
 				std::vector<std::thread> threads(nonMainCount);
-				
+				ThreadWaiting.resize(nonMainCount);
+				OperationComplete.resize(nonMainCount);
+				for (int i =0; i < nonMainCount; ++i)
+				{
+					threads[i] = std::thread(&Sampler::ThreadWaiter<Functor>,this,i,i*kPerThread,(i+1)*kPerThread,std::ref(f));
+
+				}
+
 				PredictionBar pb(nSamples);
 				for (int l = 0; l < nSamples; ++l)
 				{
 					for (int t = 0; t < nonMainCount; ++t)
 					{
-						threads[t] = std::thread(&Sampler::SamplingStep<Functor>,this,t*kPerThread,(t+1)*kPerThread,std::ref(f));
+						//threads[t] = std::thread(&Sampler::SamplingStep<Functor>,this,t*kPerThread,(t+1)*kPerThread,std::ref(f));
+						ThreadWaiting[t] = true;
 					}
 					SamplingStep(nonMainCount*kPerThread,WalkerCount,f);
-
-					for (int t= 0; t < nonMainCount; ++t)
+					int t = 0;
+					while (t < nonMainCount)
 					{
-						threads[t].join();
+						if (ThreadWaiting[t] == false)
+						{
+							++t;
+						}
 					}
+					
 					WalkerSet.Update();
 					if (Verbose)
 					{
 						pb.Update(l);
 					}
+				}
+				for (int t = 0; t < nonMainCount; ++t)
+				{
+					OperationComplete[t] = true;
+					threads[t].join();
 				}
 				Comment("Main loop complete, exiting normally");
 
@@ -283,9 +322,11 @@ namespace MCMC
 			{
 				Histogram out(bins);
 				long int count = 0;
-				std::vector<double> Series((WalkerSet.CurrentIdx - burnIn)*WalkerCount);
+				int thinBurn = burnIn/WalkerSet.ThinningRate;
+				std::vector<double> Series((WalkerSet.CurrentIdx - thinBurn)*WalkerCount);
 
-				for (int j = burnIn; j < WalkerSet.CurrentIdx; ++j)
+
+				for (int j = thinBurn; j < WalkerSet.CurrentIdx; ++j)
 				{
 					for (int w = 0; w < WalkerCount; ++w)
 					{
@@ -312,7 +353,6 @@ namespace MCMC
 				double delta;
 				for (int its = 0; its < 4; ++its)
 				{
-					
 					delta = (largestVal - lowestVal)/bins;
 
 					// Histogram out(bins);
@@ -380,7 +420,6 @@ namespace MCMC
 						largestVal = out.Centres[bMax] + 2*delta;
 					}
 				}
-
 				double r = 0;
 				double prev = 0;
 				for (int b = 0; b < bins; ++b)
@@ -421,13 +460,13 @@ namespace MCMC
 					int failure = acor(&Mean,&Sigma,&tau,copy,T);
 					if (failure == 1)
 					{
-						std::cout << "Failed to accurately estimate autocor for chain of length " <<  T  << " on walker " << i << std::endl;
-						tau = T/2;
+						// std::cout << "Failed to accurately estimate autocor for chain of length " <<  T  << " on walker " << i << std::endl;
+						tau = T;
 					}
 					tau = 1.0 + WalkerSet.ThinningRate * (tau -1);
 					meanT += tau;
 				}
-				// std::cout << "Mean autocorr is " << meanT/nWalkers << std::endl;
+				std::cout << "Mean autocorr is " << meanT/nWalkers << std::endl;
 				return meanT/nWalkers;
 			}
 	};
