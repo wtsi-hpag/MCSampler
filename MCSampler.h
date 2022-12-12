@@ -262,7 +262,10 @@ namespace MCMC
 						threads[t].join();
 					}
 					WalkerSet.Update();
-					pb.Update(l);
+					if (Verbose)
+					{
+						pb.Update(l);
+					}
 				}
 				Comment("Main loop complete, exiting normally");
 
