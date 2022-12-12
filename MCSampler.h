@@ -5,104 +5,13 @@
 #include <thread>
 #include "acor.h"
 #include "PredictionBar.h"
+#include "Walkers.h"
 namespace MCMC
 {
 	
 	const double NEG_INF = -99*1e300; 
 
-	struct WalkerEnsemble
-	{
-		WalkerEnsemble(){}
-		WalkerEnsemble(int walkers, int dimensions)
-		{
-			Positions = std::vector<std::vector<double>>(walkers, std::vector<double>(dimensions,0.0));
-			Scores = std::vector<double>(walkers,0);
-		}
-		std::vector<std::vector<double>> Positions;
-		std::vector<double> Scores;
-	};
-	struct Walkers
-	{
-		Walkers(){}
-		Walkers(int duration, int thinningRate, int walkers, int dimension,std::vector<double> initialGuess,std::default_random_engine & generator)
-		{
-			ThinningRate = thinningRate;
-			Past = std::vector<WalkerEnsemble>(duration/ThinningRate+1,WalkerEnsemble(walkers,dimension));
-			CurrentTime = -1;
-			Current = WalkerEnsemble(walkers,dimension);
-			std::normal_distribution<double> updator(0,0.01);
-			Means = std::vector<double>(walkers,-1);
-		
-			//generate initial state as a small gaussian ball around the single initial guess
-			for (int i =0 ; i < dimension; ++i)
-			{
-				double a = initialGuess[i];
-				if (a == 0)
-				{
-					a = 0.01;
-				}
-				for (int w = 0; w < walkers; ++w)
-				{
-					Current.Positions[w][i] = a * (1.0 + updator(generator));
-				}
-			}
-			//don't update yet as scores not filled in yet!
-		}
-		int CurrentTime;
-		int CurrentIdx = 0;
-		std::vector<WalkerEnsemble> Past;
-		WalkerEnsemble Current;
-		WalkerEnsemble PreviousState;
-		std::vector<double> Means;
-		int ThinningRate = 10;
-		const WalkerEnsemble & Previous()
-		{
-			return PreviousState;
-		}
-		const double & Previous(int walker, int element)
-		{
-			return PreviousState.Positions[walker][element];
-		}
-		const double & PreviousScore(int walker)
-		{
-			return PreviousState.Scores[walker];
-		}
-		void Update()
-		{
-			++CurrentTime;
-			// Past[CurrentTime] = Current;
-			PreviousState = Current;
-			if (CurrentTime % ThinningRate == 0)
-			{
-				Past[CurrentIdx] = Current;
-				++CurrentIdx;
-			}
-		}
-		double AutoCovariance(int walker, int delay)
-		{
-			
-			if (Means[walker] == -1)
-			{
-				double sum3 = 0;
-				for (int m = 0; m < CurrentIdx; ++m)
-				{
-					sum3 += Past[m].Scores[walker];
-				}
-				Means[walker] = sum3/CurrentIdx;
-				std::cout << walker << " has mean f " << sum3/CurrentIdx << std::endl;
-			}
-			double mean = Means[walker];
-			double sum = 0;
-			
-			for (int m = 0; m < CurrentIdx-delay; ++m)
-			{
-				double fLag = Past[m+delay].Scores[walker];
-				double f = Past[m].Scores[walker];
-				sum += (fLag - mean) * (f - mean);
-			}
-			return sum/(CurrentIdx - delay);
-		}
-	};
+	
 	struct Histogram
 	{
 		std::vector<double> Centres;
@@ -119,6 +28,7 @@ namespace MCMC
 			const int WalkerCount;
 			const int Dimensions;
 			const int ThreadCount;
+			
 			std::vector<std::string> ParameterNames;
 			Walkers WalkerSet;
 			std::default_random_engine generator;
@@ -150,7 +60,7 @@ namespace MCMC
 					}
 					double newScore = LogScore(proposal);
 					double oldScore = WalkerSet.PreviousScore(k);
-					double acceptanceScore = std::min(1.0,exp((newScore - oldScore)));
+					double acceptanceScore = std::min(1.0,pow(Z,Dimensions-1) * exp((newScore - oldScore)));
 					double r = uniform(generator);
 					if (r<= acceptanceScore)
 					{
@@ -190,6 +100,8 @@ namespace MCMC
 			}
 		public:
 			double MoveParameter = 2;
+			double BurnInFactor = 5; //The number of autocorrelation times used as the burn in period. 
+			int AdditionalThinningRate = 1;
 			Sampler(int nWalkers,int dimensions, int nThreads) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(nThreads)
 			{
 				Comment("Initialising Multi-Core Sampler, using default parameter names");
@@ -246,15 +158,16 @@ namespace MCMC
 
 
 			template<typename Functor>
-			void Run(Functor & f, int nSamples,int thinningRate,std::vector<double> initialGuess)
+			int Run(Functor & f, int nSamples,int thinningRate,std::vector<double> initialGuess)
 			{
+				Comment("\nNew MCMC Run Beginning");
 				if (initialGuess.size() != Dimensions)
 				{
 					initialGuess.resize(Dimensions,0.0);
 				}
 
 				WalkerSet = Walkers(nSamples,thinningRate,WalkerCount,Dimensions, initialGuess,generator);
-				Comment("Walker Ensemble initialised\nPopulating initial scores....");		
+				Comment("\tWalker Ensemble initialised\n\tPopulating initial scores.");		
 				
 				for (int k = 0; k < WalkerCount; ++k)
 				{
@@ -262,7 +175,7 @@ namespace MCMC
 					WalkerSet.Current.Scores[k] = score;
 				}
 				WalkerSet.Update();
-				Comment("Initial conditions prepped, beginning main loop");
+				Comment("\tBeginning main loop");
 
 				pairSelector = std::uniform_int_distribution<int>(0,WalkerCount-2);//-2 to allow for the offset of not choosing yourself!
 				int kPerThread = WalkerCount/ThreadCount;
@@ -271,6 +184,7 @@ namespace MCMC
 				std::vector<std::thread> threads(nonMainCount);
 				ThreadWaiting.resize(nonMainCount);
 				OperationComplete.resize(nonMainCount);
+				
 				for (int i =0; i < nonMainCount; ++i)
 				{
 					threads[i] = std::thread(&Sampler::ThreadWaiter<Functor>,this,i,i*kPerThread,(i+1)*kPerThread,std::ref(f));
@@ -278,6 +192,7 @@ namespace MCMC
 				}
 
 				PredictionBar pb(nSamples);
+				pb.SetName("\tProgress: ");
 				for (int l = 0; l < nSamples; ++l)
 				{
 					for (int t = 0; t < nonMainCount; ++t)
@@ -301,14 +216,45 @@ namespace MCMC
 						pb.Update(l);
 					}
 				}
+				if (Verbose)
+				{
+					pb.Clear();
+				}
 				for (int t = 0; t < nonMainCount; ++t)
 				{
 					OperationComplete[t] = true;
 					threads[t].join();
 				}
-				Comment("Main loop complete, exiting normally");
+				Comment("\tMain loop complete\n\tComputing Autocorrelation Time");
 
+				double tau = WalkerSet.ComputeAutocorrelation();
+				double burnIn = tau * BurnInFactor;
 
+				if (burnIn < nSamples)
+				{
+					Comment("\tMean autocorrelation time found to be " + std::to_string(tau) + " with a pre-thinning rate of " +std::to_string(WalkerSet.ThinningRate));
+					
+					int newRate = ceil(  (WalkerSet.ThinnedAutocorrelationTime)-0.1);
+					if (newRate > 1)
+					{
+						Comment("\t\tAdditional thinning by a factor of " + std::to_string(newRate) + " recommended");
+						AdditionalThinningRate = newRate;
+					}				
+					
+					Comment("\tSample density judged sufficient");
+					return 0;
+				}
+				else
+				{
+					double rate = (double)tau/nSamples;
+					Comment("\tMean autocorrelation time found to be " + std::to_string(tau));
+					Comment("\n-----------------------------------------------------");
+					Comment("\t\tWARNING!");
+					Comment("\ttau = " + std::to_string(rate) + " x sampled positions.");
+					Comment("\tSample not statistically valid"); //don't throw an error as can be resumed!
+					Comment("-----------------------------------------------------");
+					return 1;
+				}
 
 
 			}
@@ -318,21 +264,22 @@ namespace MCMC
 				generator = std::default_random_engine(n);
 			}
 
-			Histogram GenerateHistogram(int burnIn, int dim, int bins)
+			Histogram GenerateHistogram(int dim, int bins)
 			{
 				Histogram out(bins);
 				long int count = 0;
-				int thinBurn = burnIn/WalkerSet.ThinningRate;
+				int thinBurn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
 				std::vector<double> Series((WalkerSet.CurrentIdx - thinBurn)*WalkerCount);
 
-
-				for (int j = thinBurn; j < WalkerSet.CurrentIdx; ++j)
+				// std::cout << "Computing hist for " << thinBurn << "  " << WalkerSet.CurrentIdx << std::endl;
+				for (int j = thinBurn; j < WalkerSet.CurrentIdx; j+=1)
 				{
 					for (int w = 0; w < WalkerCount; ++w)
 					{
 						double v = WalkerSet.Past[j].Positions[w][dim];
 						Series[count] = v;
 						++count;
+
 					}
 				}
 				
@@ -385,7 +332,7 @@ namespace MCMC
 						}
 					}
 					
-					double contrast = 100;
+					double contrast =100;
 					//trace up
 					bool leftFound = false;
 					bool rightFound = false;
@@ -398,6 +345,7 @@ namespace MCMC
 							lowestVal = out.Centres[b] - delta;
 							b = bMax;
 							leftFound = true;
+							// std::cout << "Left contrast = " << thisContrast << "  " << lowestVal << std::endl;
 						}
 					}
 					for (int b = bins-1; b > bMax; --b)
@@ -425,49 +373,13 @@ namespace MCMC
 				for (int b = 0; b < bins; ++b)
 				{
 					out.Frequency[b] /= (count*delta);
-					
+					// std::cout << out.Centres[b] << "  " << out.Frequency[b] << std::endl;
 					// r += out.Frequency[b];
 					// out.Frequency[b] = r;
 				}
 				return out;
 			}
 
-			double ComputeAutocorrelation(int nWalkers)
-			{
-				int Duration = WalkerSet.CurrentIdx;
-
-				double meanT = 0;
-
-	
-
-				for (int i = 0; i < nWalkers; ++i)
-				{
-					// 
-					int T = WalkerSet.CurrentIdx;
-					// std::cout << "Computing autocorr for " << i << " has " << T << " elements " << std::endl;
-					std::vector<double> Series(T);
-
-					double M = 0;
-					for (int t = 0; t < T; ++t)
-					{
-						Series[t] = WalkerSet.Past[t].Scores[i];
-						// M += Series[t];
-					}
-					double * copy = &Series[0];
-					double Sigma;
-					double Mean;
-					double tau;
-					int failure = acor(&Mean,&Sigma,&tau,copy,T);
-					if (failure == 1)
-					{
-						// std::cout << "Failed to accurately estimate autocor for chain of length " <<  T  << " on walker " << i << std::endl;
-						tau = T;
-					}
-					tau = 1.0 + WalkerSet.ThinningRate * (tau -1);
-					meanT += tau;
-				}
-				std::cout << "Mean autocorr is " << meanT/nWalkers << std::endl;
-				return meanT/nWalkers;
-			}
+			
 	};
 }
