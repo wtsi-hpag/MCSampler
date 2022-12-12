@@ -29,6 +29,9 @@ This works on any function which takes an ```std::vector<double>``` as input, an
 
 ```c++
 #include "MCSampler.h"
+
+struct inputData {}; //some data structure for holding the internal data
+
 class LikelihoodFunctor
 {
 	inputData MyData
