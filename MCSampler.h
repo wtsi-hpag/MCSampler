@@ -75,18 +75,14 @@ namespace MCMC
 			void ThreadWaiter(int threadID,int kStart, int kEnd, Functor & LogScore)
 			{
 				OperationComplete[threadID] = false;
-				int z = 0;
 				while (OperationComplete[threadID] == false)
 				{
-					++z;
 					if (ThreadWaiting[threadID])
 					{
 						SamplingStep(kStart,kEnd,LogScore);
 
 						ThreadWaiting[threadID] = false;
 					}
-
-
 				}
 			}
 
@@ -96,6 +92,89 @@ namespace MCMC
 				if (Verbose)
 				{
 					std::cout << input << std::endl;
+				}
+			}
+
+			template<typename Functor>
+			int MainSampleLoop(Functor & f, int nSamples)
+			{
+				Comment("\tBeginning main loop");
+				pairSelector = std::uniform_int_distribution<int>(0,WalkerCount-2);//-2 to allow for the offset of not choosing yourself!
+				int kPerThread = WalkerCount/ThreadCount;
+				
+				int nonMainCount = ThreadCount - 1;
+				std::vector<std::thread> threads(nonMainCount);
+				ThreadWaiting.resize(nonMainCount);
+				OperationComplete.resize(nonMainCount);
+				
+				for (int i =0; i < nonMainCount; ++i)
+				{
+					threads[i] = std::thread(&Sampler::ThreadWaiter<Functor>,this,i,i*kPerThread,(i+1)*kPerThread,std::ref(f));
+				}
+
+				PredictionBar pb(nSamples);
+				pb.SetName("\tProgress: ");
+				for (int l = 0; l < nSamples; ++l)
+				{
+					for (int t = 0; t < nonMainCount; ++t)
+					{
+						//threads[t] = std::thread(&Sampler::SamplingStep<Functor>,this,t*kPerThread,(t+1)*kPerThread,std::ref(f));
+						ThreadWaiting[t] = true;
+					}
+					SamplingStep(nonMainCount*kPerThread,WalkerCount,f);
+					int t = 0;
+					while (t < nonMainCount)
+					{
+						if (ThreadWaiting[t] == false)
+						{
+							++t;
+						}
+					}
+					
+					WalkerSet.Update();
+					if (Verbose)
+					{
+						pb.Update(l);
+					}
+				}
+				if (Verbose)
+				{
+					pb.Clear();
+				}
+				for (int t = 0; t < nonMainCount; ++t)
+				{
+					OperationComplete[t] = true;
+					threads[t].join();
+				}
+				Comment("\tMain loop complete\n\tComputing Autocorrelation Time");
+
+				double tau = WalkerSet.ComputeAutocorrelation();
+				double burnIn = tau * BurnInFactor;
+
+				if (burnIn < nSamples)
+				{
+					Comment("\tMean autocorrelation time found to be " + std::to_string(tau) + " with a pre-thinning rate of " +std::to_string(WalkerSet.ThinningRate));
+					
+					int newRate = ceil(  (WalkerSet.ThinnedAutocorrelationTime)-0.1);
+					if (newRate > 1)
+					{
+						Comment("\t\tAdditional thinning by a factor of " + std::to_string(newRate) + " recommended");
+						AdditionalThinningRate = newRate;
+					}				
+					
+					Comment("\tSample density judged sufficient");
+					return 0;
+				}
+				else
+				{
+					double rate = (double)tau/nSamples;
+					Comment("\tMean autocorrelation time found to be " + std::to_string(tau));
+					Comment("\n-----------------------------------------------------");
+					Comment("\t\tWARNING!");
+					Comment("\ttau = " + std::to_string(rate) + " x sampled positions.");
+					Comment("\tSample not statistically valid"); //don't throw an error as can be resumed!
+					Comment("-----------------------------------------------------");
+					return 1;
 				}
 			}
 		public:
@@ -175,87 +254,22 @@ namespace MCMC
 					WalkerSet.Current.Scores[k] = score;
 				}
 				WalkerSet.Update();
-				Comment("\tBeginning main loop");
-
-				pairSelector = std::uniform_int_distribution<int>(0,WalkerCount-2);//-2 to allow for the offset of not choosing yourself!
-				int kPerThread = WalkerCount/ThreadCount;
 				
-				int nonMainCount = ThreadCount - 1;
-				std::vector<std::thread> threads(nonMainCount);
-				ThreadWaiting.resize(nonMainCount);
-				OperationComplete.resize(nonMainCount);
+
 				
-				for (int i =0; i < nonMainCount; ++i)
-				{
-					threads[i] = std::thread(&Sampler::ThreadWaiter<Functor>,this,i,i*kPerThread,(i+1)*kPerThread,std::ref(f));
+				return MainSampleLoop(f,nSamples);
 
-				}
+			}
 
-				PredictionBar pb(nSamples);
-				pb.SetName("\tProgress: ");
-				for (int l = 0; l < nSamples; ++l)
-				{
-					for (int t = 0; t < nonMainCount; ++t)
-					{
-						//threads[t] = std::thread(&Sampler::SamplingStep<Functor>,this,t*kPerThread,(t+1)*kPerThread,std::ref(f));
-						ThreadWaiting[t] = true;
-					}
-					SamplingStep(nonMainCount*kPerThread,WalkerCount,f);
-					int t = 0;
-					while (t < nonMainCount)
-					{
-						if (ThreadWaiting[t] == false)
-						{
-							++t;
-						}
-					}
-					
-					WalkerSet.Update();
-					if (Verbose)
-					{
-						pb.Update(l);
-					}
-				}
-				if (Verbose)
-				{
-					pb.Clear();
-				}
-				for (int t = 0; t < nonMainCount; ++t)
-				{
-					OperationComplete[t] = true;
-					threads[t].join();
-				}
-				Comment("\tMain loop complete\n\tComputing Autocorrelation Time");
+			template<typename Functor>
+			int Resume(Functor & f, int nSamples)
+			{
+				Comment("Resuming previous operation with " + std::to_string(nSamples)+ " samples");
 
-				double tau = WalkerSet.ComputeAutocorrelation();
-				double burnIn = tau * BurnInFactor;
-
-				if (burnIn < nSamples)
-				{
-					Comment("\tMean autocorrelation time found to be " + std::to_string(tau) + " with a pre-thinning rate of " +std::to_string(WalkerSet.ThinningRate));
-					
-					int newRate = ceil(  (WalkerSet.ThinnedAutocorrelationTime)-0.1);
-					if (newRate > 1)
-					{
-						Comment("\t\tAdditional thinning by a factor of " + std::to_string(newRate) + " recommended");
-						AdditionalThinningRate = newRate;
-					}				
-					
-					Comment("\tSample density judged sufficient");
-					return 0;
-				}
-				else
-				{
-					double rate = (double)tau/nSamples;
-					Comment("\tMean autocorrelation time found to be " + std::to_string(tau));
-					Comment("\n-----------------------------------------------------");
-					Comment("\t\tWARNING!");
-					Comment("\ttau = " + std::to_string(rate) + " x sampled positions.");
-					Comment("\tSample not statistically valid"); //don't throw an error as can be resumed!
-					Comment("-----------------------------------------------------");
-					return 1;
-				}
-
+				WalkerSet.Expand(nSamples);
+				Comment("\tWalker Set expanded");
+				
+				return MainSampleLoop(f,nSamples);
 
 			}
 

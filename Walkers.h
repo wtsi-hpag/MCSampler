@@ -24,6 +24,7 @@ namespace MCMC
 		{
 			WalkerCount = walkers;
 			ThinningRate = thinningRate;
+			Dimension = dimension;
 			Past = std::vector<WalkerEnsemble>(duration/ThinningRate+1,WalkerEnsemble(walkers,dimension));
 			CurrentTime = -1;
 			Current = WalkerEnsemble(walkers,dimension);
@@ -45,10 +46,16 @@ namespace MCMC
 			}
 			//don't update yet as scores not filled in yet!
 		}
+
+		void Expand(int newSamples)
+		{
+			
+			Past.resize(Past.size() + newSamples/ThinningRate+1, WalkerEnsemble(WalkerCount,Dimension));
+		}
 		int CurrentTime;
 		int CurrentIdx = 0;
 		int WalkerCount;
-		
+		int Dimension;
 		std::vector<WalkerEnsemble> Past;
 		WalkerEnsemble Current;
 		WalkerEnsemble PreviousState;
