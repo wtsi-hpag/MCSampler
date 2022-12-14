@@ -4,6 +4,12 @@
 #include "acor.h"
 namespace MCMC
 {
+	double ale(double x, double y)
+	{
+		return std::max(x,y) + log(1.0 + exp(-abs(x - y)));
+	}
+
+
 	struct WalkerEnsemble
 	{
 		WalkerEnsemble(){}
@@ -85,30 +91,7 @@ namespace MCMC
 				++CurrentIdx;
 			}
 		}
-		double AutoCovariance(int walker, int delay)
-		{
-			
-			if (Means[walker] == -1)
-			{
-				double sum3 = 0;
-				for (int m = 0; m < CurrentIdx; ++m)
-				{
-					sum3 += Past[m].Scores[walker];
-				}
-				Means[walker] = sum3/CurrentIdx;
-				std::cout << walker << " has mean f " << sum3/CurrentIdx << std::endl;
-			}
-			double mean = Means[walker];
-			double sum = 0;
-			
-			for (int m = 0; m < CurrentIdx-delay; ++m)
-			{
-				double fLag = Past[m+delay].Scores[walker];
-				double f = Past[m].Scores[walker];
-				sum += (fLag - mean) * (f - mean);
-			}
-			return sum/(CurrentIdx - delay);
-		}
+	
 
 		double ComputeAutocorrelation()
 		{
@@ -128,7 +111,7 @@ namespace MCMC
 				double M = 0;
 				for (int t = 0; t < T; ++t)
 				{
-					Series[t] = Past[t].Scores[i];
+					Series[t] = exp(Past[t].Scores[i]);
 					// M += Series[t];
 				}
 				double * copy = &Series[0];
@@ -148,5 +131,33 @@ namespace MCMC
 			double adjustedCorrelation = std::max(ThinningRate * ThinnedAutocorrelationTime,1.0*ThinningRate);
 			return adjustedCorrelation;
 		}
+
+		// double FunctionMean(double burnInFactor, int thinning)
+		// {
+		// 	double sum = 0;
+		// 	int start = ThinnedAutocorrelationTime * burnInFactor;
+		// 	long int c =0;
+		// 	for (int i = start; i < CurrentIdx; i += thinning)
+		// 	{
+		// 		for (int w = 0; w < WalkerCount; ++w)
+		// 		{
+		// 			// sum += exp(Past[i].Scores[w]);
+		// 			if (c == 0)
+		// 			{
+		// 				sum = Past[i].Scores[w];
+		// 			}
+		// 			else
+		// 			{
+		// 				sum = ale(sum,Past[i].Scores[w]);
+		// 			}
+		// 			++c;
+
+		// 			double r = (double)rand()/RAND_MAX;
+
+		// 		}
+		// 	}
+		// 	return exp(sum - log(c));
+		// 	// return sum/c;
+		// }
 	};
 }

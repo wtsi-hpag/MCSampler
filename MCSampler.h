@@ -3,14 +3,29 @@
 #include <iostream>
 #include <random>
 #include <thread>
+#include <stdexcept>
 #include "acor.h"
 #include "PredictionBar.h"
 #include "Walkers.h"
+
 namespace MCMC
 {
 	
 	const double NEG_INF = -99*1e300; 
 
+	struct ParameterEstimate
+	{
+		double Fraction;
+		double Lower;
+		double Upper;
+		double Median;
+
+		 friend std::ostream& operator<< (std::ostream& stream, const ParameterEstimate& p)
+		 {
+			stream << p.Median << "(" << p.Fraction << " CI = [-" << p.Lower << ", +" << p.Upper << "] )";
+			return stream;
+		 }
+	};
 	
 	struct Histogram
 	{
@@ -283,10 +298,10 @@ namespace MCMC
 				Histogram out(bins);
 				long int count = 0;
 				int thinBurn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
-				std::vector<double> Series((WalkerSet.CurrentIdx - thinBurn)*WalkerCount);
+				std::vector<double> Series((WalkerSet.CurrentIdx - thinBurn)*WalkerCount/AdditionalThinningRate);
 
 				// std::cout << "Computing hist for " << thinBurn << "  " << WalkerSet.CurrentIdx << std::endl;
-				for (int j = thinBurn; j < WalkerSet.CurrentIdx; j+=1)
+				for (int j = thinBurn; j < WalkerSet.CurrentIdx; j+=AdditionalThinningRate)
 				{
 					for (int w = 0; w < WalkerCount; ++w)
 					{
@@ -297,22 +312,15 @@ namespace MCMC
 					}
 				}
 				
-				std::sort(Series.begin(),Series.end());
+				// std::sort(Series.begin(),Series.end());
 				// return out;
-				double thresh = 0;
 				int N = Series.size();
-				int lowerIdx = thresh*N;
-				int upperIdx = N - 1-lowerIdx;
-
-				
-
-			
 				
 				bool tailDominated = true;
-				double lowestVal = Series[lowerIdx];
-				double largestVal = Series[upperIdx];
+				double lowestVal = *std::min_element(Series.begin(),Series.end());
+				double largestVal = *std::max_element(Series.begin(),Series.end());
 				double delta;
-				for (int its = 0; its < 4; ++its)
+				for (int its = 0; its < 40; ++its)
 				{
 					delta = (largestVal - lowestVal)/bins;
 
@@ -329,6 +337,7 @@ namespace MCMC
 						double v= Series[i];
 						if (v >= lowestVal && v <= largestVal)
 						{
+							
 							int bin = (v - lowestVal)/delta;
 							bin = std::min(bins-1,std::max(0,bin)); //needed because of equality in if statement: can cause under or overflows
 							++out.Frequency[bin];
@@ -387,13 +396,151 @@ namespace MCMC
 				for (int b = 0; b < bins; ++b)
 				{
 					out.Frequency[b] /= (count*delta);
-					// std::cout << out.Centres[b] << "  " << out.Frequency[b] << std::endl;
 					// r += out.Frequency[b];
 					// out.Frequency[b] = r;
 				}
 				return out;
 			}
 
-			
+
+			std::vector<std::vector<double>> FlattenedChains(int thinningRate)
+			{
+				int burnIn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
+				int size = (WalkerSet.CurrentIdx - burnIn)/thinningRate * WalkerCount;
+				std::cout << "Flattened vector has size " << size << std::endl;
+				std::vector<std::vector<double>> out(size,std::vector<double>(Dimensions));
+
+				int c = 0;
+				for (int i = burnIn; i < WalkerSet.CurrentIdx; i+=thinningRate)
+				{
+					for (int w = 0; w < WalkerCount; ++w)
+					{
+						out[c] = WalkerSet.Past[i].Positions[w];
+						++c;
+					}
+				}
+
+				return out;
+			}
+			std::vector<std::vector<double>> FlattenedChains()
+			{
+				return FlattenedChains(AdditionalThinningRate);
+			}
+
+			const std::vector<double> & DrawPosition()
+			{
+				int burnIn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
+				int size = (WalkerSet.CurrentIdx - burnIn);
+
+				int w = floor(uniform(generator) * WalkerCount);
+				int t = floor(uniform(generator) * size);
+
+				return WalkerSet.Past[t].Positions[w];
+			}
+			std::vector<std::vector<double>> DrawPositions(int n)
+			{
+				int burnIn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
+				int size = (WalkerSet.CurrentIdx - burnIn);
+				if (n > size/AdditionalThinningRate)
+				{
+					throw std::invalid_argument("You requested more draws than there are independent samples in the chain, cannot comply with this request");
+				}
+
+				std::vector<std::vector<double>> out(n,std::vector<double>(Dimensions,0));
+
+				for (int i =0; i < n; ++i)
+				{
+					int w = floor(uniform(generator) * WalkerCount);
+					int t = floor(uniform(generator) * size);
+					out[i] = WalkerSet.Past[t].Positions[w];
+				}
+				return out;
+			}
+
+			ParameterEstimate Estimate(int dim, double fraction)
+			{
+				int thinBurn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
+				std::vector<double> Series((WalkerSet.CurrentIdx - thinBurn)*WalkerCount/AdditionalThinningRate);
+				int count = 0;
+				// std::cout << "Computing hist for " << thinBurn << "  " << WalkerSet.CurrentIdx << std::endl;
+				for (int j = thinBurn; j < WalkerSet.CurrentIdx; j+=AdditionalThinningRate)
+				{
+					for (int w = 0; w < WalkerCount; ++w)
+					{
+						double v = WalkerSet.Past[j].Positions[w][dim];
+						Series[count] = v;
+						++count;
+					}
+				}
+				std::sort(Series.begin(),Series.end());
+				int N = count;
+
+				double upFrac = 0.5 + fraction/2;
+				double midFrac = 0.5;
+				double downFrac = 0.5 - fraction/2;
+				std::vector<double> fracs = {downFrac, midFrac, upFrac};
+				for (int i = 0; i < fracs.size(); ++i)
+				{
+					int low = floor(fracs[i] * N);
+					double bruch = fracs[i] * N - low;
+					double val = Series[low] + bruch * (Series[low+1] - Series[low]);
+					fracs[i] = val;
+				}
+				ParameterEstimate p;
+				p.Fraction = fraction;
+				p.Median = fracs[1];
+				p.Lower = p.Median - fracs[0];
+				p.Upper = fracs[2] - p.Median;
+				
+
+				return p;
+			}
+
+			double FunctionIntegrator()
+			{
+
+				// return WalkerSet.FunctionMean(BurnInFactor,AdditionalThinningRate);
+				std::vector<double> SemiMajor(Dimensions,0.0);
+				std::vector<double> Centre(Dimensions,0.0);
+
+				double nby2 = (double)Dimensions/2;
+				double logA  = -nby2 * log(2*M_PI);
+				for (int d = 0; d < Dimensions; ++d)
+				{
+					ParameterEstimate p = Estimate(d,0.5);
+					Centre[d] = p.Median;
+					SemiMajor[d] = std::min(abs(p.Lower),abs(p.Upper));
+					std::cout << "\t" << d << "  " << Centre[d] << "  " << SemiMajor[d] << std::endl;
+					logA -= log(SemiMajor[d]);
+				}
+
+				
+
+
+				int thinBurn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
+				double run = -9999999;
+				int c = 0;
+				for (int j = thinBurn; j < WalkerSet.CurrentIdx; j+= 1)
+				{
+					for (int w = 0; w < WalkerCount; ++w)
+					{
+						double r = 0;
+						for (int d = 0; d < Dimensions; ++d)
+						{
+							double x = WalkerSet.Past[j].Positions[w][d];
+							double q = (x - Centre[d])/SemiMajor[d];
+							r -= 0.5 * q * q;
+						}
+
+					
+						run = ale(run,logA + r- WalkerSet.Past[j].Scores[w]);
+					
+						++c;
+					}
+				}
+
+				return  exp(log(c)-run);
+			}
+
 	};
 }

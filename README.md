@@ -63,11 +63,8 @@ This produces an MCMC chain for each walker, computes the autocorrelation time, 
 ### Things to do
 
 
-- Estimate
-- Plotter
-- Draw samples
-- Flattener
-- Resume function?
+- Plotter (inc. 2D)
+
 
 <!-- 
 ## Compiling 
