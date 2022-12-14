@@ -433,7 +433,7 @@ namespace MCMC
 				int size = (WalkerSet.CurrentIdx - burnIn);
 
 				int w = floor(uniform(generator) * WalkerCount);
-				int t = floor(uniform(generator) * size);
+				int t = burnIn + floor(uniform(generator) * size);
 
 				return WalkerSet.Past[t].Positions[w];
 			}
@@ -451,7 +451,7 @@ namespace MCMC
 				for (int i =0; i < n; ++i)
 				{
 					int w = floor(uniform(generator) * WalkerCount);
-					int t = floor(uniform(generator) * size);
+					int t = burnIn + floor(uniform(generator) * size);
 					out[i] = WalkerSet.Past[t].Positions[w];
 				}
 				return out;
