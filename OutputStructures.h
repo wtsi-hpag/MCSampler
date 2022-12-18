@@ -26,7 +26,7 @@ namespace MCMC
 		std::vector<double> Y;
 		std::vector<std::vector<double>> Z;
 
-		Surface(int Nx, int Ny)
+		Surface(int nx, int ny) : Nx(nx), Ny(ny)
 		{
 			X.resize(Nx);
 			Y.resize(Ny);
@@ -36,8 +36,13 @@ namespace MCMC
 
 	struct Histogram
 	{
+		int Dimension;
+		double LowerBound;
+		double UpperBound;
+		std::vector<double> RawData;
 		std::vector<double> Centres;
 		std::vector<double> Frequency;
+		Histogram(){};
 		Histogram(int bins)
 		{
 			Centres.resize(bins);

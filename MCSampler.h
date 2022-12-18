@@ -7,12 +7,23 @@
 #include "acor.h"
 #include "PredictionBar.h"
 #include "Walkers.h"
-
+#include "OutputStructures.h"
 namespace MCMC
 {
 	
 	const double NEG_INF = -99*1e300; 
 
+	void boundUpdator(double & upper, double & lower, const double & candidate)
+	{
+		if (candidate > upper)
+		{
+			upper = candidate;
+		}
+		if (candidate < lower)
+		{
+			lower = candidate;
+		}
+	}
 
 	class Sampler
 	{
@@ -21,17 +32,18 @@ namespace MCMC
 			const int Dimensions;
 			const int ThreadCount;
 			
-			std::vector<std::string> ParameterNames;
 			Walkers WalkerSet;
 			std::default_random_engine generator;
 			std::uniform_real_distribution<double> uniform = std::uniform_real_distribution<double>(0,1);
 			std::uniform_int_distribution<int> pairSelector;
 			std::vector<bool> ThreadWaiting;
 			std::vector<bool> OperationComplete;
+			std::vector<int> Accepted;
+			
 			bool Verbose = true;
 
 			template<typename Functor>
-			void SamplingStep(int kStart, int kEnd, Functor & LogScore)
+			void SamplingStep(int selfID,int kStart, int kEnd, Functor & LogScore)
 			{
 				std::vector<double> proposal(Dimensions);
 				for (int k = kStart; k < kEnd; ++k)
@@ -58,6 +70,7 @@ namespace MCMC
 					{
 						WalkerSet.Current.Positions[k] = proposal;
 						WalkerSet.Current.Scores[k] = newScore;
+						Accepted[selfID]++;
 					}
 					
 				}
@@ -71,7 +84,7 @@ namespace MCMC
 				{
 					if (ThreadWaiting[threadID])
 					{
-						SamplingStep(kStart,kEnd,LogScore);
+						SamplingStep(threadID,kStart,kEnd,LogScore);
 
 						ThreadWaiting[threadID] = false;
 					}
@@ -113,7 +126,7 @@ namespace MCMC
 						//threads[t] = std::thread(&Sampler::SamplingStep<Functor>,this,t*kPerThread,(t+1)*kPerThread,std::ref(f));
 						ThreadWaiting[t] = true;
 					}
-					SamplingStep(nonMainCount*kPerThread,WalkerCount,f);
+					SamplingStep(nonMainCount,nonMainCount*kPerThread,WalkerCount,f);
 					int t = 0;
 					while (t < nonMainCount)
 					{
@@ -133,11 +146,15 @@ namespace MCMC
 				{
 					pb.Clear();
 				}
+				int total = Accepted[nonMainCount];
 				for (int t = 0; t < nonMainCount; ++t)
 				{
 					OperationComplete[t] = true;
 					threads[t].join();
+					// std::cout << "Thread " << t << " had acceptance rate " << 
+					total+=Accepted[t];
 				}
+				std::cout << "Acceptance rate = " << 100.0/(WalkerCount * nSamples) * total << std::endl;
 				Comment("\tMain loop complete\n\tComputing Autocorrelation Time");
 
 				double tau = WalkerSet.ComputeAutocorrelation();
@@ -175,51 +192,20 @@ namespace MCMC
 			int AdditionalThinningRate = 1;
 			Sampler(int nWalkers,int dimensions, int nThreads) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(nThreads)
 			{
-				Comment("Initialising Multi-Core Sampler, using default parameter names");
-				ParameterNames.resize(dimensions);
-				for (int i = 0; i < dimensions; ++i)
+				if (nThreads > 1)
 				{
-					ParameterNames[i] = "Param " + std::to_string(i);
+					Comment("Initialising MCMC Sampler on " + std::to_string(nThreads) + " cores");
 				}
+				else
+				{
+					Comment("Initialising Single-Core Sampler");
+				}
+				Accepted.resize(nThreads,0);
 			}
 			Sampler(int nWalkers, int dimensions) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(1)
 			{
-				Comment("Initialising Single-Core Sampler, using default parameter names");
-				ParameterNames.resize(dimensions);
-				for (int i = 0; i < dimensions; ++i)
-				{
-					ParameterNames[i] = "Param " + std::to_string(i);
-				}
-			}
-			Sampler(int nWalkers,int dimensions,int nThreads, std::vector<std::string> names) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(nThreads)
-			{
-				Comment("Initialising Multi-Core Sampler");
-				int origSize = names.size(); //protect against dodgy name arrays
-				if (origSize != dimensions)
-				{
-					Comment("\tWARNING: Name vector was ill-sized and had to be buffered");
-					names.resize(dimensions);
-					for (int j = origSize; j < dimensions; ++j)
-					{
-						names[j] = "Param " + std::to_string(j);
-					}
-				}
-				ParameterNames = names;
-			}
-			Sampler(int nWalkers,int dimensions, std::vector<std::string> names) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(1)
-			{
-				Comment("Initialising Single-Core Sampler");
-				int origSize = names.size(); //protect against dodgy name arrays
-				if (origSize != dimensions)
-				{
-					Comment("\tWARNING: Name vector was ill-sized and had to be buffered");
-					names.resize(dimensions);
-					for (int j = origSize; j < dimensions; ++j)
-					{
-						names[j] = "Param " + std::to_string(j);
-					}
-				}
-				ParameterNames = names;
+				Comment("Initialising Default Sampler (Single Thread)");
+				Accepted.resize(ThreadCount,0);
 			}
 			template<typename Functor>
 			void Run(Functor & f, int nSamples,std::vector<double> initialGuess)
@@ -231,6 +217,7 @@ namespace MCMC
 			template<typename Functor>
 			int Run(Functor & f, int nSamples,int thinningRate,std::vector<double> initialGuess)
 			{
+				std::fill(Accepted.begin(),Accepted.end(),0);
 				Comment("\nNew MCMC Run Beginning");
 				if (initialGuess.size() != Dimensions)
 				{
@@ -273,9 +260,10 @@ namespace MCMC
 			Histogram GenerateHistogram(int dim, int bins)
 			{
 				Histogram out(bins);
+				out.Dimension = dim;
 				long int count = 0;
 				int thinBurn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
-				std::vector<double> Series((WalkerSet.CurrentIdx - thinBurn)*WalkerCount/AdditionalThinningRate);
+				std::vector<double> Series((WalkerSet.CurrentIdx - thinBurn)*WalkerCount*1.0/AdditionalThinningRate);
 
 				// std::cout << "Computing hist for " << thinBurn << "  " << WalkerSet.CurrentIdx << std::endl;
 				for (int j = thinBurn; j < WalkerSet.CurrentIdx; j+=AdditionalThinningRate)
@@ -288,7 +276,7 @@ namespace MCMC
 
 					}
 				}
-				
+				out.RawData = Series;
 				// std::sort(Series.begin(),Series.end());
 				// return out;
 				int N = Series.size();
@@ -332,7 +320,7 @@ namespace MCMC
 						}
 					}
 					
-					double contrast =100;
+					double contrast =1000;
 					//trace up
 					bool leftFound = false;
 					bool rightFound = false;
@@ -368,6 +356,8 @@ namespace MCMC
 						largestVal = out.Centres[bMax] + 2*delta;
 					}
 				}
+				out.LowerBound = lowestVal;
+				out.UpperBound = largestVal;
 				double r = 0;
 				double prev = 0;
 				for (int b = 0; b < bins; ++b)
@@ -379,7 +369,48 @@ namespace MCMC
 				return out;
 			}
 
+			Surface GenerateCorrelationSurface(const Histogram & hist1, const Histogram & hist2, int bins)
+			{
+				int dim1 = hist1.Dimension;
+				int dim2 = hist2.Dimension;
 
+				if (dim1 == dim2)
+				{
+					throw std::invalid_argument("Can only generate correlation surfaces for different dimensions");
+				}
+				Surface out(bins,bins);
+
+				int count = hist1.RawData.size();
+				double min1 = hist1.LowerBound;
+				double min2 = hist2.LowerBound;
+				double max1 = hist1.UpperBound;
+				double max2 = hist2.UpperBound;
+				double delta1 = (max1 - min1)/bins;
+				double delta2 = (max2 - min2)/bins;
+				for (int c = 0; c < count; ++c)
+				{
+					double vx = hist1.RawData[c];
+					double vy = hist2.RawData[c];
+					if (vx >= min1 && vx <= max1 && vy >=min2 && vy <= max2)
+					{
+						int bx = std::min(bins-1,std::max(0,(int)((vx - min1)/delta1)));
+						int by = std::min(bins-1,std::max(0,(int((vy - min2)/delta2))));
+						++out.Z[by][bx];
+					}
+				}
+				for (int bx = 0; bx < bins; ++bx)
+				{
+					out.X[bx] = min1 + (bx+0.5)*delta1;
+					out.Y[bx] = min2 + (bx + 0.5) * delta2; 
+					for (int by = 0; by < bins; ++by)
+					{
+						
+						out.Z[by][bx]/=(count * delta1*delta2);
+					}
+				}
+				
+				return out;
+			}
 
 			std::vector<std::vector<double>> FlattenedChains(int thinningRate)
 			{
@@ -473,52 +504,5 @@ namespace MCMC
 
 				return p;
 			}
-
-			double FunctionIntegrator()
-			{
-
-				// return WalkerSet.FunctionMean(BurnInFactor,AdditionalThinningRate);
-				std::vector<double> SemiMajor(Dimensions,0.0);
-				std::vector<double> Centre(Dimensions,0.0);
-
-				double nby2 = (double)Dimensions/2;
-				double logA  = -nby2 * log(2*M_PI);
-				for (int d = 0; d < Dimensions; ++d)
-				{
-					ParameterEstimate p = Estimate(d,0.5);
-					Centre[d] = p.Median;
-					SemiMajor[d] = std::min(abs(p.Lower),abs(p.Upper));
-					std::cout << "\t" << d << "  " << Centre[d] << "  " << SemiMajor[d] << std::endl;
-					logA -= log(SemiMajor[d]);
-				}
-
-				
-
-
-				int thinBurn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
-				double run = -9999999;
-				int c = 0;
-				for (int j = thinBurn; j < WalkerSet.CurrentIdx; j+= 1)
-				{
-					for (int w = 0; w < WalkerCount; ++w)
-					{
-						double r = 0;
-						for (int d = 0; d < Dimensions; ++d)
-						{
-							double x = WalkerSet.Past[j].Positions[w][d];
-							double q = (x - Centre[d])/SemiMajor[d];
-							r -= 0.5 * q * q;
-						}
-
-					
-						run = ale(run,logA + r- WalkerSet.Past[j].Scores[w]);
-					
-						++c;
-					}
-				}
-
-				return  exp(log(c)-run);
-			}
-
 	};
 }

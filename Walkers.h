@@ -2,6 +2,7 @@
 #include <vector>
 #include <random>
 #include "acor.h"
+#include "PredictionBar.h"
 namespace MCMC
 {
 	double ale(double x, double y)
@@ -34,7 +35,7 @@ namespace MCMC
 			Past = std::vector<WalkerEnsemble>(duration/ThinningRate+1,WalkerEnsemble(walkers,dimension));
 			CurrentTime = -1;
 			Current = WalkerEnsemble(walkers,dimension);
-			std::normal_distribution<double> updator(0,0.01);
+			std::normal_distribution<double> updator(0,0.4);
 			Means = std::vector<double>(walkers,-1);
 		
 			//generate initial state as a small gaussian ball around the single initial guess
@@ -100,9 +101,11 @@ namespace MCMC
 			double meanT = 0;
 
 
-
+			PredictionBar pb(WalkerCount);
+			pb.SetName("\tProgress:");
 			for (int i = 0; i < WalkerCount; ++i)
 			{
+
 				// 
 				int T = CurrentIdx;
 				// std::cout << "Computing autocorr for " << i << " has " << T << " elements " << std::endl;
@@ -126,6 +129,7 @@ namespace MCMC
 				}
 				tau = tau;
 				meanT += tau;
+				pb.Update(i);
 			}
 			ThinnedAutocorrelationTime = meanT/WalkerCount;
 			double adjustedCorrelation = std::max(ThinningRate * ThinnedAutocorrelationTime,1.0*ThinningRate);
