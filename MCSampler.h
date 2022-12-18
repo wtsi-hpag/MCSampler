@@ -163,7 +163,6 @@ namespace MCMC
 							
 							MoveParameter = std::max(1.2,MoveParameter);
 						}
-
 						std::fill(Accepted.begin(),Accepted.end(),0);
 
 					}
@@ -188,7 +187,7 @@ namespace MCMC
 				}
 			
 				Comment("\tMain loop complete");
-				Comment("\t\tFinal Acceptance rate was " + std::to_string(round(100.0/(WalkerCount * (nSamples - tuningLength))*total)) + "%");
+				Comment("\t\tFinal Acceptance rate was " + std::to_string((int)round(100.0/(WalkerCount * (nSamples - tuningLength))*total)) + "%");
 				Comment("\tComputing Autocorrelation Time");
 
 				double tau = WalkerSet.ComputeAutocorrelation();
