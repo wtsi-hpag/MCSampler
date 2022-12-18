@@ -119,11 +119,15 @@ namespace MCMC
 
 				PredictionBar pb(nSamples);
 				pb.SetName("\tProgress: ");
+				int checkTime = 300;
+				double targetAcceptance = 0.23;
+				int tuningLength = nSamples/10;
+				int decreaseRun = 0;
+				int increaseRun = 0;
 				for (int l = 0; l < nSamples; ++l)
 				{
 					for (int t = 0; t < nonMainCount; ++t)
 					{
-						//threads[t] = std::thread(&Sampler::SamplingStep<Functor>,this,t*kPerThread,(t+1)*kPerThread,std::ref(f));
 						ThreadWaiting[t] = true;
 					}
 					SamplingStep(nonMainCount,nonMainCount*kPerThread,WalkerCount,f);
@@ -134,6 +138,34 @@ namespace MCMC
 						{
 							++t;
 						}
+					}
+
+					if ((l+1)%checkTime == 0 && l < tuningLength)
+					{
+						int total = Accepted[nonMainCount];
+						for (int i = 0; i < nonMainCount; ++i)
+						{
+							total += Accepted[i];
+						}
+						double acceptanceRate = (double)total/(WalkerCount * checkTime);
+						if (acceptanceRate > (targetAcceptance + 0.05))
+						{
+							++increaseRun;
+							decreaseRun = 0;
+							MoveParameter *= 1 + 0.05 * (increaseRun);
+						}
+
+						if (acceptanceRate < (targetAcceptance - 0.05))
+						{
+							++decreaseRun;
+							increaseRun = 0;
+							MoveParameter *= std::max(0.4,1.0 - 0.05 * (decreaseRun + 1));
+							
+							MoveParameter = std::max(1.2,MoveParameter);
+						}
+
+						std::fill(Accepted.begin(),Accepted.end(),0);
+
 					}
 					
 					WalkerSet.Update();
@@ -154,8 +186,10 @@ namespace MCMC
 					// std::cout << "Thread " << t << " had acceptance rate " << 
 					total+=Accepted[t];
 				}
-				std::cout << "Acceptance rate = " << 100.0/(WalkerCount * nSamples) * total << std::endl;
-				Comment("\tMain loop complete\n\tComputing Autocorrelation Time");
+			
+				Comment("\tMain loop complete");
+				Comment("\t\tFinal Acceptance rate was " + std::to_string(round(100.0/(WalkerCount * (nSamples - tuningLength))*total)) + "%");
+				Comment("\tComputing Autocorrelation Time");
 
 				double tau = WalkerSet.ComputeAutocorrelation();
 				double burnIn = tau * BurnInFactor;

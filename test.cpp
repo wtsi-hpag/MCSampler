@@ -30,9 +30,9 @@ double logLikelihood(const std::vector<double> & parameters)
 
 int main(int argc, char ** argv)
 {
-	int nWalkers = 400;//the number of members of the ensemble - the higher the number the more parallelisation helps you
+	int nWalkers = 40;//the number of members of the ensemble - the higher the number the more parallelisation helps you
 	int dimensions = 3;//the number of parameters required for logLikelihodd
-	int thin = 100;
+	int thin = 1;
 	int threads = 1;
 	if (argc > 1)
 	{
@@ -41,9 +41,9 @@ int main(int argc, char ** argv)
 	std::cout << "Running threads = " << threads << std::endl;
 	MCMC::Sampler sampler(nWalkers, dimensions,threads);
 	sampler.Seed(time(NULL));
-	sampler.MoveParameter = 1.4;
+	sampler.MoveParameter = 1800;
 	// sampler.BurnInFactor = 100;
-	std::vector<double> init(dimensions,1.5);
+	std::vector<double> init(dimensions,2.5);
 
 	int nSamples = 1000000;
 	// sampler.BurnInFactor = 0.3;
