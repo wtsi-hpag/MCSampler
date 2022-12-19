@@ -121,7 +121,7 @@ namespace MCMC
 				pb.SetName("\tProgress: ");
 				int checkTime = 300;
 				double targetAcceptance = 0.23;
-				int tuningLength = nSamples/10;
+				int tuningLength = nSamples/5;
 				int decreaseRun = 0;
 				int increaseRun = 0;
 				for (int l = 0; l < nSamples; ++l)
@@ -222,6 +222,7 @@ namespace MCMC
 		public:
 			double MoveParameter = 2;
 			double BurnInFactor = 5; //The number of autocorrelation times used as the burn in period. 
+			double StartingConfidence = 0.1;
 			int AdditionalThinningRate = 1;
 			Sampler(int nWalkers,int dimensions, int nThreads) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(nThreads)
 			{
@@ -257,7 +258,7 @@ namespace MCMC
 					initialGuess.resize(Dimensions,0.0);
 				}
 
-				WalkerSet = Walkers(nSamples,thinningRate,WalkerCount,Dimensions, initialGuess,generator);
+				WalkerSet = Walkers(nSamples,thinningRate,WalkerCount,Dimensions, initialGuess,StartingConfidence,generator);
 				Comment("\tWalker Ensemble initialised\n\tPopulating initial scores.");		
 				
 				for (int k = 0; k < WalkerCount; ++k)
