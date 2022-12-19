@@ -537,5 +537,42 @@ namespace MCMC
 
 				return p;
 			}
+
+
+
+			#ifdef JSL_LIBRARY_INSTALLED
+				JSL::gnuplot CornerPlot(int bins)
+				{
+					
+					JSL::gnuplot gp;
+					int plotDim = Dimensions;
+					gp.SetMultiplot(plotDim,plotDim);
+					std::vector<MCMC::Histogram> Hs(plotDim);
+					for (int d = 0; d < plotDim; ++d)
+					{
+						Hs[d] =  GenerateHistogram(d,bins);
+					}
+					for (int d = 0; d < Dimensions; ++d)
+					{
+						for (int j = 0; j < d; ++j)
+						{
+							gp.SetAxis(d,j);
+							auto corr = GenerateCorrelationSurface(Hs[j],Hs[d],bins);
+							gp.Map(corr.X,corr.Y,corr.Z);
+							gp.SetXRange(Hs[j].LowerBound,Hs[j].UpperBound);
+							gp.SetYRange(Hs[d].LowerBound,Hs[d].UpperBound);
+							// gp.SetXLabel("")
+						}
+						gp.SetAxis(d,d);
+						gp.Plot(Hs[d].Centres,Hs[d].Frequency);
+						gp.SetXRange(Hs[d].LowerBound,Hs[d].UpperBound);
+						
+						// gp.SetYLog(true);
+						gp.SetGrid(true);
+						
+					}
+					return gp;
+				}
+			#endif
 	};
 }

@@ -100,7 +100,7 @@ namespace MCMC
 
 			double meanT = 0;
 
-
+			int failedAcors = 0;
 			PredictionBar pb(WalkerCount);
 			pb.SetName("\tProgress:");
 			for (int i = 0; i < WalkerCount; ++i)
@@ -114,25 +114,44 @@ namespace MCMC
 				double M = 0;
 				for (int t = 0; t < T; ++t)
 				{
-					Series[t] = exp(Past[t].Scores[i]);
-					// M += Series[t];
+					Series[t] = Past[t].Scores[i];
 				}
 				double * copy = &Series[0];
 				double Sigma;
 				double Mean;
 				double tau;
 				int failure = acor(&Mean,&Sigma,&tau,copy,T);
-				if (failure == 1)
+				if (failure == 1 || std::isnan(T))
 				{
 					// std::cout << "Failed to accurately estimate autocor for chain of length " <<  T  << " on walker " << i << std::endl;
 					tau = T;
+					failedAcors++;
 				}
-				tau = tau;
-				meanT += tau;
-				pb.Update(i);
+				else
+				{
+					meanT += tau;
+				}
+				// std::cout << "\tWalker " << i << " reports " << tau << std::endl;
+				// pb.Update(i);
 			}
-			ThinnedAutocorrelationTime = meanT/WalkerCount;
-			double adjustedCorrelation = std::max(ThinningRate * ThinnedAutocorrelationTime,1.0*ThinningRate);
+			
+			double failureRate = (double)failedAcors/WalkerCount;
+			std::cout << "Failure rate = " << failureRate << std::endl;
+			double adjustedCorrelation;
+			if (failureRate < 0.8)
+			{
+				ThinnedAutocorrelationTime = meanT/(WalkerCount - failedAcors);
+				if (ThinnedAutocorrelationTime < 1.6)
+				{
+					ThinnedAutocorrelationTime = 1;
+				}
+				 adjustedCorrelation= std::max(ThinningRate * ThinnedAutocorrelationTime,1.0*ThinningRate);
+			}
+			else
+			{
+				ThinnedAutocorrelationTime = Duration;
+				adjustedCorrelation = ThinningRate * Duration;
+			}
 			return adjustedCorrelation;
 		}
 
