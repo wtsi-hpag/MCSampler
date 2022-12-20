@@ -36,13 +36,13 @@ namespace MCMC
 			CurrentTime = -1;
 			Current = WalkerEnsemble(walkers,dimension);
 			double sigma = std::min(1000.0,std::max(1e-4,1.0/(confidence+1e-10)));
-			std::cout <<confidence << "  " << sigma << std::endl;
-			std::normal_distribution<double> updator(0,10.4);
+			std::normal_distribution<double> updator(0,sigma);
 			Means = std::vector<double>(walkers,-1);
 
 			//generate initial state as a small gaussian ball around the single initial guess
 			for (int i =0 ; i < dimension; ++i)
 			{
+			
 				double a = initialGuess[i];
 				if (a == 0)
 				{
@@ -121,15 +121,7 @@ namespace MCMC
 				double Mean;
 				double tau;
 				int failure = acor(&Mean,&Sigma,&tau,&Series[0],T);
-				
-				if (failure == 1 || std::isnan(tau))
-				{
-					// taus[i] = T;
-				}
-				else
-				{
-					taus.push_back(tau);
-				}
+				taus.push_back(tau);
 				// std::cout << "\tWalker " << i << " reports " << tau << std::endl;
 				// pb.Update(i);
 			}

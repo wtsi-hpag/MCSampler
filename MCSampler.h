@@ -119,7 +119,7 @@ namespace MCMC
 
 				PredictionBar pb(nSamples);
 				pb.SetName("\tProgress: ");
-				int checkTime = 300;
+				int checkTime = 3000;
 				double targetAcceptance = 0.23;
 				int tuningLength = nSamples/5;
 				int decreaseRun = 0;
@@ -153,6 +153,7 @@ namespace MCMC
 							++increaseRun;
 							decreaseRun = 0;
 							MoveParameter *= 1 + 0.05 * (increaseRun);
+							MoveParameter = std::min(MoveParameter,100.0);
 						}
 
 						if (acceptanceRate < (targetAcceptance - 0.05))
@@ -161,10 +162,9 @@ namespace MCMC
 							increaseRun = 0;
 							MoveParameter *= std::max(0.4,1.0 - 0.05 * (decreaseRun + 1));
 							
-							MoveParameter = std::max(1.2,MoveParameter);
+							MoveParameter = std::max(1.01,MoveParameter);
 						}
 						std::fill(Accepted.begin(),Accepted.end(),0);
-
 					}
 					
 					WalkerSet.Update();
