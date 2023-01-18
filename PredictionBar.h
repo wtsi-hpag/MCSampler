@@ -266,6 +266,7 @@ namespace MCMC
 			{
 				Start = std::chrono::system_clock::now();
 				UpdateTime = Start;
+				// Update(0);
 			}
 
 
@@ -317,17 +318,17 @@ namespace MCMC
 					
 					double globalRate = totalProg/totalDuration.count();
 					double stepRate = (totalProg - prevProgress)/updateDuration.count();
-					double w = 0.5;
+					double w = 0.2;
 					double meanRate = (1.0 - w)*globalRate + w*stepRate;
 					double anticipate = std::max(0.0,Prediction - updateDuration.count());
-					double mem = 0.99;
+					double mem = 0.9;
 					double activePrediction = (1.0 - totalProg)/meanRate;
 					if (activePrediction > anticipate)
 					{
 						mem = 0.5;
 					}
 					
-					
+					// std::cout << globalRate << "  " << stepRate << std::endl;
 					// std::cout << "Anticiapting " << Prediction << " - " << updateDuration.count() << " = " << Prediction - updateDuration.count() << " = " << anticipate << " actively " << activePrediction << " av = " << mem * anticipate + (1.0 - mem)*activePrediction<< "\n\n\n\n";
 					Prediction = mem * anticipate + (1.0 - mem)*activePrediction;
 					// std::cout << "Estimated " << totalProg << " through at rates " << globalRate << "   " << stepRate << "\n\n\n\n";

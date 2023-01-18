@@ -35,44 +35,75 @@ namespace MCMC
 			Walkers WalkerSet;
 			std::default_random_engine generator;
 			std::uniform_real_distribution<double> uniform = std::uniform_real_distribution<double>(0,1);
+			std::normal_distribution<double> normal = std::normal_distribution<double>(0,1);
 			std::uniform_int_distribution<int> pairSelector;
 			std::vector<bool> ThreadWaiting;
 			std::vector<bool> OperationComplete;
 			std::vector<int> Accepted;
-			
+			std::vector<int> Computed;
+			bool Alert = false;
 			bool Verbose = true;
 
 			template<typename Functor>
 			void SamplingStep(int selfID,int kStart, int kEnd, Functor & LogScore)
 			{
 				std::vector<double> proposal(Dimensions);
+				MoveParameter = 1.0 + exp(logMoveParameter);
 				for (int k = kStart; k < kEnd; ++k)
 				{
+					double Prior = 1;
+					double Z;
+					
+					
 					int pair = pairSelector(generator);
 					if (pair >= k)
 					{
 						pair += 1;
 					}
+					
+					double minusZ;
 					double zNum = uniform(generator) * (MoveParameter - 1) + 1;
-					double Z = (zNum * zNum)/MoveParameter; //fancy inverse transform sampling on the GW10 function
-					//samples from the function g(Z=z) \propto 1/sqrt(z) for z between 1/a and a
+					Z = (zNum * zNum)/MoveParameter; //fancy inverse transform sampling on the GW10 function
+						//samples from the function g(Z=z) \propto 1/sqrt(z) for z between 1/a and a
+					minusZ = 1.0 -Z;
+					// if (logMoveParameter > -4)
+					// {
+						
+					// }
+					// else
+					// {
+					// 	minusZ = (2*uniform(generator) -1) * exp(logMoveParameter);
+					// 	Z = 1.0 + Z; 
+					// }
 
 					for (int j = 0; j < Dimensions; ++j)
 					{
 						double pairJ = WalkerSet.Previous(pair,j);
-						proposal[j] = pairJ + Z * (WalkerSet.Previous(k,j) - pairJ);
+						proposal[j] = pairJ * minusZ + Z * WalkerSet.Previous(k,j);
 					}
+					Prior = pow(Z,Dimensions-1);
+					
+
+					
 					double newScore = LogScore(proposal);
 					double oldScore = WalkerSet.PreviousScore(k);
-					double acceptanceScore = std::min(1.0,pow(Z,Dimensions-1) * exp((newScore - oldScore)));
+					double annealedLogProb = (newScore - oldScore)/CurrentTemperature;
+					double acceptanceScore = std::min(1.0,Prior * exp(annealedLogProb));
 					double r = uniform(generator);
-					if (r<= acceptanceScore)
+
+
+					if (!std::isnan(newScore))
 					{
-						WalkerSet.Current.Positions[k] = proposal;
-						WalkerSet.Current.Scores[k] = newScore;
-						Accepted[selfID]++;
+						if (r<= acceptanceScore)
+						{
+							WalkerSet.Current.Positions[k] = proposal;
+							WalkerSet.Current.Scores[k] = newScore;
+							Accepted[selfID]++;
+						}
 					}
+
 					
+					Computed[selfID]++;
 				}
 			}
 
@@ -119,9 +150,9 @@ namespace MCMC
 
 				PredictionBar pb(nSamples);
 				pb.SetName("\tProgress: ");
-				int checkTime = 3000;
+				
 				double targetAcceptance = 0.23;
-				int tuningLength = nSamples/5;
+				int tuningLength = nSamples*tuningFrac;
 				int decreaseRun = 0;
 				int increaseRun = 0;
 				for (int l = 0; l < nSamples; ++l)
@@ -140,33 +171,51 @@ namespace MCMC
 						}
 					}
 
-					if ((l+1)%checkTime == 0 && l < tuningLength)
+					if ((l+1)%CheckTime == 0 && l < tuningLength)
 					{
-						int total = Accepted[nonMainCount];
+						int total = Computed[nonMainCount];
+						int acc = Accepted[nonMainCount];
 						for (int i = 0; i < nonMainCount; ++i)
 						{
-							total += Accepted[i];
+							total += Computed[i];
+							acc += Accepted[i];
 						}
-						double acceptanceRate = (double)total/(WalkerCount * checkTime);
-						if (acceptanceRate > (targetAcceptance + 0.05))
+						double acceptanceRate = (double)acc/(total);
+						if (acceptanceRate > (targetAcceptance + 0.03))
 						{
 							++increaseRun;
 							decreaseRun = 0;
-							MoveParameter *= 1 + 0.05 * (increaseRun);
-							MoveParameter = std::min(MoveParameter,100.0);
+							logMoveParameter += MoveAccelerator + 0.02;
+							logMoveParameter = std::min(logMoveParameter,10.0);
+							// std::cout << "Increase" << std::endl;
 						}
 
-						if (acceptanceRate < (targetAcceptance - 0.05))
+						if (acceptanceRate < (targetAcceptance - 0.03))
 						{
 							++decreaseRun;
 							increaseRun = 0;
-							MoveParameter *= std::max(0.4,1.0 - 0.05 * (decreaseRun + 1));
-							
-							MoveParameter = std::max(1.01,MoveParameter);
+							logMoveParameter -= MoveAccelerator;
+							logMoveParameter = std::max(logMoveParameter,-10.0);
+							// std::cout << "Decrease" << std::endl;
 						}
+						if (acceptanceRate > 0.95 || acceptanceRate < 0.01)
+						{
+							Alert = true;
+						}
+						// std::cout << logMoveParameter << "  " << acceptanceRate << "  " << CurrentTemperature << std::endl;
 						std::fill(Accepted.begin(),Accepted.end(),0);
+						std::fill(Computed.begin(),Computed.end(),0);
 					}
 					
+					if ((l+1) % CoolingSteps == 0 && CurrentTemperature > 1)
+					{
+						CurrentTemperature *= (1.0 - CoolingRate);
+						CurrentTemperature = std::max(1.0,CurrentTemperature);	
+					}
+					if (l > tuningLength)
+					{
+						CurrentTemperature = 1;
+					}
 					WalkerSet.Update();
 					if (Verbose)
 					{
@@ -177,21 +226,27 @@ namespace MCMC
 				{
 					pb.Clear();
 				}
-				int total = Accepted[nonMainCount];
+				int total = Computed[nonMainCount];
+				int acc = Accepted[nonMainCount];
 				for (int t = 0; t < nonMainCount; ++t)
 				{
 					OperationComplete[t] = true;
 					threads[t].join();
 					// std::cout << "Thread " << t << " had acceptance rate " << 
-					total+=Accepted[t];
+					total+=Computed[t];
+					acc += Accepted[t];
 				}
 			
 				Comment("\tMain loop complete");
-				Comment("\t\tFinal Acceptance rate was " + std::to_string((int)round(100.0/(WalkerCount * (nSamples - tuningLength))*total)) + "%");
+				Comment("\t\tFinal Acceptance rate was " + std::to_string((int)round(100.0/(total)*acc)) + "%");
 				Comment("\tComputing Autocorrelation Time");
 
+				WalkerSet.PruneChains();
+				Comment("\t" + std::to_string(WalkerCount - WalkerSet.ViableCount) + " chains were pruned due to local optima effects, " + std::to_string(WalkerSet.ViableCount) + "remaining");
 				double tau = WalkerSet.ComputeAutocorrelation();
 				double burnIn = tau * BurnInFactor;
+
+
 
 				if (burnIn < nSamples)
 				{
@@ -209,7 +264,7 @@ namespace MCMC
 				}
 				else
 				{
-					double rate = (double)tau/nSamples;
+					double rate = (double)tau/(nSamples * loops);
 					Comment("\tMean autocorrelation time found to be " + std::to_string(tau));
 					Comment("\n-----------------------------------------------------");
 					Comment("\t\tWARNING!");
@@ -219,8 +274,17 @@ namespace MCMC
 					return 1;
 				}
 			}
-		public:
 			double MoveParameter = 2;
+			int loops = 1;
+		public:
+			double InitialTemperature = 1000;
+			double CoolingRate;
+			double tuningFrac = 0.3;
+			int CoolingSteps = 500;
+			double CurrentTemperature;
+			double MoveAccelerator;
+			int CheckTime = 80;
+			double logMoveParameter = 0;
 			double BurnInFactor = 5; //The number of autocorrelation times used as the burn in period. 
 			double StartingConfidence = 0.1;
 			int AdditionalThinningRate = 1;
@@ -235,11 +299,13 @@ namespace MCMC
 					Comment("Initialising Single-Core Sampler");
 				}
 				Accepted.resize(nThreads,0);
+				Computed.resize(nThreads,0);
 			}
 			Sampler(int nWalkers, int dimensions) : WalkerCount(nWalkers), Dimensions(dimensions), ThreadCount(1)
 			{
 				Comment("Initialising Default Sampler (Single Thread)");
 				Accepted.resize(ThreadCount,0);
+				Computed.resize(ThreadCount,0);
 			}
 			template<typename Functor>
 			void Run(Functor & f, int nSamples,std::vector<double> initialGuess)
@@ -251,7 +317,13 @@ namespace MCMC
 			template<typename Functor>
 			int Run(Functor & f, int nSamples,int thinningRate,std::vector<double> initialGuess)
 			{
+				CurrentTemperature = InitialTemperature;
+				int nCool = nSamples * tuningFrac / (CoolingSteps);
+				CoolingRate = 1.0 - pow(InitialTemperature,-1.0/nCool);
+				MoveAccelerator = 50 * CheckTime/(nSamples * tuningFrac);
+				loops =1;
 				std::fill(Accepted.begin(),Accepted.end(),0);
+				std::fill(Computed.begin(),Computed.end(),0);
 				Comment("\nNew MCMC Run Beginning");
 				if (initialGuess.size() != Dimensions)
 				{
@@ -277,6 +349,9 @@ namespace MCMC
 			template<typename Functor>
 			int Resume(Functor & f, int nSamples)
 			{
+				++loops;
+				std::fill(Accepted.begin(),Accepted.end(),0);
+				std::fill(Computed.begin(),Computed.end(),0);
 				Comment("Resuming previous operation with " + std::to_string(nSamples)+ " samples");
 
 				WalkerSet.Expand(nSamples);
@@ -297,17 +372,19 @@ namespace MCMC
 				out.Dimension = dim;
 				long int count = 0;
 				int thinBurn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
-				std::vector<double> Series((WalkerSet.CurrentIdx - thinBurn)*WalkerCount*1.0/AdditionalThinningRate);
+				std::vector<double> Series((WalkerSet.CurrentIdx - thinBurn)*WalkerSet.ViableCount*1.0/AdditionalThinningRate);
 
 				// std::cout << "Computing hist for " << thinBurn << "  " << WalkerSet.CurrentIdx << std::endl;
 				for (int j = thinBurn; j < WalkerSet.CurrentIdx; j+=AdditionalThinningRate)
 				{
 					for (int w = 0; w < WalkerCount; ++w)
 					{
-						double v = WalkerSet.Past[j].Positions[w][dim];
-						Series[count] = v;
-						++count;
-
+						if (WalkerSet.ChainViable[w])
+						{
+							double v = WalkerSet.Past[j].Positions[w][dim];
+							Series[count] = v;
+							++count;
+						}
 					}
 				}
 				out.RawData = Series;
@@ -449,7 +526,7 @@ namespace MCMC
 			std::vector<std::vector<double>> FlattenedChains(int thinningRate)
 			{
 				int burnIn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
-				int size = (WalkerSet.CurrentIdx - burnIn)/thinningRate * WalkerCount;
+				int size = (WalkerSet.CurrentIdx - burnIn)/thinningRate * WalkerSet.ViableCount;
 				std::cout << "Flattened vector has size " << size << std::endl;
 				std::vector<std::vector<double>> out(size,std::vector<double>(Dimensions));
 
@@ -458,8 +535,11 @@ namespace MCMC
 				{
 					for (int w = 0; w < WalkerCount; ++w)
 					{
-						out[c] = WalkerSet.Past[i].Positions[w];
-						++c;
+						if (WalkerSet.ChainViable[w])
+						{
+							out[c] = WalkerSet.Past[i].Positions[w];
+							++c;
+						}
 					}
 				}
 
@@ -475,9 +555,15 @@ namespace MCMC
 				int burnIn = WalkerSet.ThinnedAutocorrelationTime * BurnInFactor;
 				int size = (WalkerSet.CurrentIdx - burnIn);
 
-				int w = floor(uniform(generator) * WalkerCount);
+				
 				int t = burnIn + floor(uniform(generator) * size);
-
+				bool walkerBad = true;
+				int w;
+				while (walkerBad)
+				{
+					w = floor(uniform(generator) * WalkerCount);
+					walkerBad = (WalkerSet.ChainViable[w] == false);
+				}
 				return WalkerSet.Past[t].Positions[w];
 			}
 			std::vector<std::vector<double>> DrawPositions(int n)
@@ -493,7 +579,13 @@ namespace MCMC
 
 				for (int i =0; i < n; ++i)
 				{
-					int w = floor(uniform(generator) * WalkerCount);
+					bool walkerBad = true;
+					int w;
+					while (walkerBad)
+					{
+						w = floor(uniform(generator) * WalkerCount);
+						walkerBad = (WalkerSet.ChainViable[w] == false);
+					}
 					int t = burnIn + floor(uniform(generator) * size);
 					out[i] = WalkerSet.Past[t].Positions[w];
 				}
@@ -555,6 +647,7 @@ namespace MCMC
 					}
 					for (int d = 0; d < Dimensions; ++d)
 					{
+
 						for (int j = 0; j < d; ++j)
 						{
 							gp.SetAxis(d,j);

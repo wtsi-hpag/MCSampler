@@ -9,7 +9,11 @@ namespace MCMC
 	{
 		return std::max(x,y) + log(1.0 + exp(-abs(x - y)));
 	}
-
+	struct WalkerScore
+	{
+		double Score=0;
+		int ID;
+	};
 
 	struct WalkerEnsemble
 	{
@@ -37,7 +41,6 @@ namespace MCMC
 			Current = WalkerEnsemble(walkers,dimension);
 			double sigma = std::min(1000.0,std::max(1e-4,1.0/(confidence+1e-10)));
 			std::normal_distribution<double> updator(0,sigma);
-			Means = std::vector<double>(walkers,-1);
 
 			//generate initial state as a small gaussian ball around the single initial guess
 			for (int i =0 ; i < dimension; ++i)
@@ -64,11 +67,13 @@ namespace MCMC
 		int CurrentTime;
 		int CurrentIdx = 0;
 		int WalkerCount;
+		int ViableCount;
 		int Dimension;
 		std::vector<WalkerEnsemble> Past;
+		std::vector<bool> ChainViable;
 		WalkerEnsemble Current;
 		WalkerEnsemble PreviousState;
-		std::vector<double> Means;
+		// std::vector<double> Means;
 		int ThinningRate = 10;
 		double ThinnedAutocorrelationTime;
 		const WalkerEnsemble & Previous()
@@ -95,6 +100,25 @@ namespace MCMC
 			}
 		}
 	
+		std::vector<WalkerScore> MeanScores()
+		{
+			std::vector<WalkerScore> Means(WalkerCount);
+			int start = CurrentIdx/10;
+			for (int w = 0; w < WalkerCount; ++w)
+			{
+				Means[w].ID = w;
+				Means[w].Score = 0;
+				for (int idx =start ; idx < CurrentIdx; ++idx)
+				{
+					Means[w].Score += Past[idx].Scores[w];
+				}
+			}
+			for (int w = 0; w < WalkerCount; ++w)
+			{
+				Means[w].Score/=(CurrentIdx-start);
+			}
+			return Means;
+		}
 
 		double ComputeAutocorrelation()
 		{
@@ -103,27 +127,77 @@ namespace MCMC
 			double meanT = 0;
 			double meanAcor = 0;
 			int failedAcors = 0;
+			
+			std::vector<double> taus;
 			PredictionBar pb(WalkerCount);
 			pb.SetName("\tProgress:");
-			std::vector<double> taus;
 			for (int i = 0; i < WalkerCount; ++i)
 			{
-				int T = CurrentIdx;
-				std::vector<double> Series(T);
-				for (int t = 0; t < T; ++t)
+
+				if (ChainViable[i])
 				{
-					Series[t] = exp(Past[t].Scores[i]);
+					int T = CurrentIdx;
+					std::vector<double> Series(T);
+					for (int t = 0; t < T; ++t)
+					{
+						Series[t] = Past[t].Scores[i];
+						
+					}
 					
+					
+					double Sigma;
+					double Mean;
+					double tau;
+					int failure = acor(&Mean,&Sigma,&tau,&Series[0],T);
+
+					if (failure == 1 || std::isnan(tau))
+					{
+						if (!std::isnan(tau))
+						{
+							tau*=10;
+						}
+						else
+						{
+							tau = T;
+						}
+							// bool estimatorContinues = true;
+							// double estimatorFactor = 7;
+							// tau = 1.0;
+
+							// double rho0 = 0;
+							// for (int n = 0; n < T; ++n)
+							// {
+							// 	double x = Series[n] - Mean;
+							// 	rho0 += x*x;
+							// }
+							// rho0/=T;
+							// // std::cout << "For walker " << i << " rho = " << rho0 << std::endl;
+							// double tauIdx = 1;
+							// while (estimatorContinues)
+							// {
+							// 	double rho = 0;
+							// 	for (int n = 0; n < T- tauIdx; ++n)
+							// 	{
+							// 		rho += (Series[n] - Mean) * (Series[n+tauIdx] - Mean);
+							// 	}
+							// 	rho/=(T - tauIdx);
+
+							// 	tau += 2 * rho/rho0;
+							
+							// 	if (tauIdx >= estimatorFactor * tau || tauIdx >= T/2)
+							// 	{
+							// 		estimatorContinues = false;
+							// 	}
+							// 	++tauIdx;
+							// }
+
+					}
+
+
+					taus.push_back(tau);
 				}
-				
-				
-				double Sigma;
-				double Mean;
-				double tau;
-				int failure = acor(&Mean,&Sigma,&tau,&Series[0],T);
-				taus.push_back(tau);
-				// std::cout << "\tWalker " << i << " reports " << tau << std::endl;
-				// pb.Update(i);
+				// std::cout << "\tWalker " << i << " reports " << tau << "  " << WalkerCount << "   \n" << std::endl;
+				pb.Update(i+1);
 			}
 
 			if (taus.size() < 0.1 * WalkerCount)
@@ -151,6 +225,65 @@ namespace MCMC
 			
 		
 			return adjustedCorrelation;
+		}
+
+		void PruneChains()
+		{
+			std::vector<WalkerScore> means = MeanScores();
+			std::sort(means.begin(),means.end(),[](const WalkerScore & lhs, const WalkerScore & rhs){return lhs.Score < rhs.Score;});
+			double prev;
+			double meanDiff = 0;
+			for (int k = 1; k < means.size(); ++k)
+			{
+				meanDiff += means[k].Score - means[k-1].Score;
+			}
+			meanDiff /= (means.size()-1);
+
+
+			std::vector<std::vector<int>> clusterMembers = {{means[0].ID}};
+			std::vector<int> clusterBegin = {0};
+			std::vector<int> clusterEnd;
+			double fac = 10;
+			int currentCluster = 0;
+			for (int k = 1; k < means.size(); ++k)
+			{
+				double diff = (means[k].Score - means[k-1].Score);
+				if (diff > fac * meanDiff)
+				{
+					clusterEnd.push_back(k);
+					clusterBegin.push_back(k);
+					clusterMembers.push_back({means[k].ID});
+					++currentCluster;
+				}
+				else
+				{
+					clusterMembers[currentCluster].push_back(means[k].ID);
+				}
+			}
+			if (clusterBegin.size()!=clusterEnd.size())
+			{
+				clusterEnd.push_back(means.size()-1);
+			}
+			// std::cout << " I have identified " << clusterBegin.size() << " clusters " << std::endl;
+			// for (int j = 0; j < clusterMembers.size(); ++j)
+			// {
+			// 	std::cout << "\t" << clusterBegin[j] << " -> " << clusterEnd[j] << " members = {";
+			// 	for (int q = 0; q < clusterMembers[j].size(); ++q)
+			// 	{
+			// 		clusterMembers
+			// 	}
+			// }
+			ChainViable.resize(WalkerCount,true);
+			ViableCount = WalkerCount;
+			for (int j = 0; j < clusterMembers.size() - 1; ++j)
+			{
+				for (int q = 0; q < clusterMembers[j].size(); ++q)
+				{
+					int idx = clusterMembers[j][q];
+					--ViableCount;
+					ChainViable[idx] = false;
+				}
+			}
 		}
 
 		// double FunctionMean(double burnInFactor, int thinning)
